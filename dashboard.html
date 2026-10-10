@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Takoo Finance Dashboard</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg: var(--tg-theme-bg-color, #0f172a);
+      --card-bg: var(--tg-theme-secondary-bg-color, #1e293b);
+      --text: var(--tg-theme-text-color, #f8fafc);
+      --hint: var(--tg-theme-hint-color, #94a3b8);
+      --accent: var(--tg-theme-button-color, #38bdf8);
+      --button-text: var(--tg-theme-button-text-color, #ffffff);
+      --success: #34d399;
+      --danger: #f87171;
+      --input-bg: rgba(255, 255, 255, 0.08);
+      --border: rgba(255, 255, 255, 0.12);
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      padding-bottom: 80px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .header h1 {
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .badge {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .card {
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    .card-title {
+      font-size: 13px;
+      color: var(--hint);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .main-balance {
+      font-size: 32px;
+      font-weight: 800;
+      color: #ffffff;
+      margin-bottom: 12px;
+    }
+    .account-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .account-item {
+      background: rgba(255, 255, 255, 0.04);
+      padding: 10px 12px;
+      border-radius: 10px;
+    }
+    .account-name {
+      font-size: 11px;
+      color: var(--hint);
+    }
+    .account-val {
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 3px;
+    }
+    .chart-container {
+      position: relative;
+      height: 220px;
+      width: 100%;
+      margin: 10px 0;
+    }
+    .tx-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .tx-item:last-child {
+      border-bottom: none;
+    }
+    .tx-desc {
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .tx-meta {
+      font-size: 11px;
+      color: var(--hint);
+      margin-top: 2px;
+    }
+    .tx-amount {
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .amount-out { color: var(--danger); }
+    .amount-in { color: var(--success); }
+
+    /* Action Buttons */
+    .btn-add {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      background: linear-gradient(135deg, #0284c7, #38bdf8);
+      color: #ffffff;
+      border: none;
+      padding: 14px;
+      border-radius: 14px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-bottom: 16px;
+      box-shadow: 0 4px 14px rgba(56, 189, 248, 0.35);
+      transition: transform 0.1s ease;
+    }
+    .btn-add:active {
+      transform: scale(0.98);
+    }
+
+    /* Modal Form */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    .modal-backdrop.active {
+      display: flex;
+    }
+    .modal-sheet {
+      background: var(--card-bg);
+      width: 100%;
+      max-width: 500px;
+      border-radius: 24px 24px 0 0;
+      padding: 24px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 -8px 24px rgba(0,0,0,0.5);
+      animation: slideUp 0.25s ease-out;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .modal-title {
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .btn-close {
+      background: none;
+      border: none;
+      color: var(--hint);
+      font-size: 24px;
+      cursor: pointer;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--hint);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .form-input, .form-select {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 12px 14px;
+      border-radius: 12px;
+      font-size: 15px;
+      outline: none;
+    }
+    .form-input:focus, .form-select:focus {
+      border-color: var(--accent);
+    }
+    .toggle-group {
+      display: flex;
+      background: var(--input-bg);
+      border-radius: 12px;
+      padding: 4px;
+      margin-bottom: 16px;
+    }
+    .toggle-btn {
+      flex: 1;
+      padding: 10px;
+      text-align: center;
+      border: none;
+      background: none;
+      color: var(--hint);
+      font-weight: 600;
+      font-size: 14px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .toggle-btn.active.expense {
+      background: var(--danger);
+      color: #fff;
+    }
+    .toggle-btn.active.income {
+      background: var(--success);
+      color: #fff;
+    }
+    .btn-submit {
+      width: 100%;
+      background: var(--accent);
+      color: #0f172a;
+      border: none;
+      padding: 14px;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    .alert-banner {
+      display: none;
+      background: rgba(52, 211, 153, 0.2);
+      border: 1px solid var(--success);
+      color: var(--success);
+      padding: 12px;
+      border-radius: 10px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div>
+      <h1>Sek Yin Jia</h1>
+      <div style="font-size: 12px; color: var(--hint);">Personal Finance Tracker</div>
+    </div>
+    <span class="badge">October 2026</span>
+  </div>
+
+  <!-- Primary Insert Transaction Action Button -->
+  <button class="btn-add" onclick="openModal()">
+    <span style="font-size: 18px;">➕</span> Insert New Transaction
+  </button>
+
+  <div id="statusBanner" class="alert-banner"></div>
+
+  <!-- Total Balance Card -->
+  <div class="card">
+    <div class="card-title">Total Net Worth</div>
+    <div class="main-balance" id="totalBalance">RM 25,617.41</div>
+    
+    <div class="card-title" style="margin-top: 10px;">Accounts Breakdown</div>
+    <div class="account-grid">
+      <div class="account-item">
+        <div class="account-name">E-Wallet</div>
+        <div class="account-val" style="color: #38bdf8;">RM 951.14</div>
+      </div>
+      <div class="account-item">
+        <div class="account-name">PMO Investment</div>
+        <div class="account-val" style="color: #a78bfa;">RM 24,685.12</div>
+      </div>
+      <div class="account-item">
+        <div class="account-name">RHB Bank</div>
+        <div class="account-val" style="color: #34d399;">RM 111.34</div>
+      </div>
+      <div class="account-item">
+        <div class="account-name">Cash</div>
+        <div class="account-val">RM 118.00</div>
+      </div>
+      <div class="account-item" style="grid-column: span 2;">
+        <div class="account-name">Maybank</div>
+        <div class="account-val" style="color: #f87171;">-RM 248.19</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Expenses Breakdown Chart -->
+  <div class="card">
+    <div class="card-title">October Spending by Category</div>
+    <div class="chart-container">
+      <canvas id="categoryChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Recent Transactions -->
+  <div class="card">
+    <div class="card-title">Recent Transactions</div>
+    <div id="txList">
+      <div class="tx-item">
+        <div>
+          <div class="tx-desc">KK Mart</div>
+          <div class="tx-meta">9 Oct • Grocery • E-Wallet</div>
+        </div>
+        <div class="tx-amount amount-out">-RM 5.60</div>
+      </div>
+      <div class="tx-item">
+        <div>
+          <div class="tx-desc">Kim Seng Mixed Rice</div>
+          <div class="tx-meta">9 Oct • Meal • E-Wallet</div>
+        </div>
+        <div class="tx-amount amount-out">-RM 8.00</div>
+      </div>
+      <div class="tx-item">
+        <div>
+          <div class="tx-desc">Apple Services</div>
+          <div class="tx-meta">8 Oct • Subscription • E-Wallet</div>
+        </div>
+        <div class="tx-amount amount-out">-RM 11.90</div>
+      </div>
+      <div class="tx-item">
+        <div>
+          <div class="tx-desc">Starbucks</div>
+          <div class="tx-meta">2 Oct • Meal • E-Wallet</div>
+        </div>
+        <div class="tx-amount amount-out">-RM 10.00</div>
+      </div>
+      <div class="tx-item">
+        <div>
+          <div class="tx-desc">Express Rail Link (KLIA)</div>
+          <div class="tx-meta">2 Oct • Transportation • E-Wallet</div>
+        </div>
+        <div class="tx-amount amount-out">-RM 8.50</div>
+      </div>
+      <div class="tx-item">
+        <div>
+          <div class="tx-desc">Bossku Reload</div>
+          <div class="tx-meta">1 Oct • Reload • E-Wallet</div>
+        </div>
+        <div class="tx-amount amount-in">+RM 874.00</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Transaction Insertion Modal -->
+  <div class="modal-backdrop" id="txModal" onclick="handleBackdropClick(event)">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h2 class="modal-title">Insert Transaction</h2>
+        <button class="btn-close" onclick="closeModal()">&times;</button>
+      </div>
+
+      <div class="toggle-group">
+        <button type="button" class="toggle-btn active expense" id="btnExpense" onclick="setTxType('expense')">💸 Expense (Debit)</button>
+        <button type="button" class="toggle-btn" id="btnIncome" onclick="setTxType('income')">💰 Income (Credit)</button>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Amount (RM)</label>
+        <input type="number" step="0.01" class="form-input" id="txAmount" placeholder="e.g. 12.50" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Account / Type</label>
+        <select class="form-select" id="txAccount">
+          <option value="E Wallet" selected>📱 E Wallet (Touch 'n Go / Grab)</option>
+          <option value="Maybank">💳 Maybank (MAE / M2U)</option>
+          <option value="RHB">🏛️ RHB Bank</option>
+          <option value="Cash">💵 Cash</option>
+          <option value="PMO">📈 PMO Investment</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Category / Event</label>
+        <select class="form-select" id="txCategory">
+          <option value="Meal" selected>🍜 Meal (Food & Dining)</option>
+          <option value="Grocery">🛒 Grocery</option>
+          <option value="Transportation">🚗 Transportation / Petrol / Toll</option>
+          <option value="Subscription fee">📱 Subscription fee</option>
+          <option value="Online Shopping">🛍️ Online Shopping</option>
+          <option value="Entertainment">🎬 Entertainment</option>
+          <option value="Electric & Water Bills">⚡ Electric & Water Bills</option>
+          <option value="Rental">🏠 Rental</option>
+          <option value="Transfer">🔄 Transfer</option>
+          <option value="Reload">➕ Reload / Top Up</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Merchant / Description Note</label>
+        <input type="text" class="form-input" id="txNote" placeholder="e.g. Kim Seng Mixed Rice, Watson's">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Date</label>
+        <input type="date" class="form-input" id="txDate">
+      </div>
+
+      <button class="btn-submit" onclick="submitTransaction()">💾 Record to Google Sheet</button>
+    </div>
+  </div>
+
+  <script>
+    // Initialize Telegram WebApp
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+    }
+
+    // Set today's date default
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    document.getElementById('txDate').value = `${yyyy}-${mm}-${dd}`;
+
+    let currentMode = 'expense';
+
+    function setTxType(mode) {
+      currentMode = mode;
+      const bExp = document.getElementById('btnExpense');
+      const bInc = document.getElementById('btnIncome');
+      if (mode === 'expense') {
+        bExp.className = 'toggle-btn active expense';
+        bInc.className = 'toggle-btn';
+      } else {
+        bExp.className = 'toggle-btn';
+        bInc.className = 'toggle-btn active income';
+      }
+    }
+
+    function openModal() {
+      document.getElementById('txModal').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('txModal').classList.remove('active');
+    }
+
+    function handleBackdropClick(e) {
+      if (e.target.id === 'txModal') {
+        closeModal();
+      }
+    }
+
+    function submitTransaction() {
+      const amountVal = parseFloat(document.getElementById('txAmount').value);
+      if (isNaN(amountVal) || amountVal <= 0) {
+        alert("Please enter a valid amount in RM.");
+        return;
+      }
+
+      const account = document.getElementById('txAccount').value;
+      const category = document.getElementById('txCategory').value;
+      const note = document.getElementById('txNote').value.trim() || category;
+      const rawDate = document.getElementById('txDate').value; // YYYY-MM-DD
+      
+      const dObj = new Date(rawDate);
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const formattedDate = `${dObj.getDate()}-${months[dObj.getMonth()]}-${dObj.getFullYear()}`;
+
+      const payload = {
+        action: "add_tx",
+        date: formattedDate,
+        amount: amountVal,
+        is_expense: currentMode === 'expense',
+        type: account,
+        event: category,
+        note: note
+      };
+
+      if (tg && tg.sendData) {
+        tg.sendData(JSON.stringify(payload));
+        closeModal();
+      } else {
+        // Fallback for standalone browser:
+        const cmd = `/add ${amountVal.toFixed(2)} ${category} ${account} ${note}`;
+        closeModal();
+        const banner = document.getElementById('statusBanner');
+        banner.style.display = 'block';
+        banner.innerHTML = `✅ Form submitted! Send this command to bot:<br><code>${cmd}</code>`;
+        navigator.clipboard?.writeText(cmd);
+      }
+    }
+
+    // Chart.js Category Breakdown
+    const ctx = document.getElementById('categoryChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Rental', 'Transfer/Inv', 'Meals', 'Groceries', 'Personal/Gadget', 'Sub/Transport'],
+        datasets: [{
+          data: [404.56, 100.00, 52.80, 26.60, 46.00, 21.20],
+          backgroundColor: [
+            '#f87171',
+            '#a78bfa',
+            '#38bdf8',
+            '#34d399',
+            '#fbbf24',
+            '#818cf8'
+          ],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: {
+              boxWidth: 10,
+              color: '#94a3b8',
+              font: { size: 10 }
+            }
+          }
+        },
+        cutout: '68%'
+      }
+    });
+  </script>
+</body>
+</html>

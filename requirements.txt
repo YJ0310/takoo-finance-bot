@@ -1,0 +1,2 @@
+# All modules used in bot.py are Python standard library (urllib, json, base64, threading, http.server)
+# No heavy dependencies needed!
