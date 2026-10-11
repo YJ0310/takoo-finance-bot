@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 Lau Jing Ying (刘静颖) - Personal Finance Secretary for Sek Yin Jia
-Casual, human, friendly, non-robotic finance assistant.
 Features:
-1. Ultra-minimalist 3-line daily report (Today spent, E-Wallet left, quick trend)
-2. Casual confirmations and natural conversational tone
-3. Gemini Vision parsing for single and multi-transaction receipts/screenshots
-4. One-tap [✅ Save] and [❌ Cancel] confirmation
-5. Cloud REST API for Google Sheets (Render 24/7) + random evening check-in
+1. Native Telegram Expandable Cards (<blockquote expandable>):
+   - Collapsed by default (takes only 1 glanceable line)
+   - Tap to expand full accounts and itemized details
+2. Inline action bar: [💳 All Balances] [📊 Open Google Sheet]
+3. Expandable Receipt Confirmation Card with [✅ Save to Sheet] and [❌ Cancel]
+4. Gemini Vision AI for single and multi-transaction receipts
+5. Cloud REST API for Google Sheets (Render 24/7) + casual evening check-in
 """
 
 import sys
@@ -232,12 +233,17 @@ def append_transactions_to_sheet(tx_list):
 
     return (start_row, end_row)
 
-def format_daily_report(data):
-    """Ultra-minimalist 3-liner report from Lau Jing Ying."""
+def format_daily_report_card(data):
+    """
+    Renders an expandable card:
+    - 1-line glance preview when collapsed
+    - Full accounts, daily average, and items when tapped
+    """
     today = datetime.now()
     today_str = f"{today.day}-{today.strftime('%b')}-{today.year}"
     
     living_expenses = []
+    today_items = []
     today_total = 0.0
     
     for tx in data["recent_tx"]:
@@ -250,6 +256,7 @@ def format_daily_report(data):
                 
                 if tx["date"] == today_str:
                     today_total += amt
+                    today_items.append((event, tx["note"] or tx["type"], amt))
             except:
                 pass
                 
@@ -264,39 +271,84 @@ def format_daily_report(data):
     
     b = data["balances"]
     
-    # Clean 3-liner as requested
-    return (
-        f"Hey! Spend check for today ({today.strftime('%d %b')}):\n"
-        f"• Spent today: `RM {today_total:.2f}` ({trend})\n"
-        f"• E-Wallet balance: `{b['EWallet']}`\n\n"
-        "Any missed expenses today, or all done? ✨"
+    today_item_lines = ""
+    if today_items:
+        today_item_lines = "\n<b>Today's Spending:</b>\n" + "\n".join([f"• {c} ({n}): RM {a:.2f}" for c, n, a in today_items])
+    else:
+        today_item_lines = "\n<i>No expenses recorded yet today.</i>"
+
+    # Native expandable blockquote HTML
+    card = (
+        "Hey! Here is your daily spend snapshot ✨\n\n"
+        "<blockquote expandable>"
+        f"📊 <b>Today: RM {today_total:.2f} ({trend}) | E-Wallet: {b['EWallet']}</b>\n"
+        "────────────────────\n"
+        f"• Oct Daily Avg: RM {daily_avg:.2f}/day\n"
+        f"{today_item_lines}\n\n"
+        "<b>Accounts Breakdown:</b>\n"
+        f"• 📱 E-Wallet: {b['EWallet']}\n"
+        f"• 💳 Maybank: {b['Maybank']}\n"
+        f"• 🏛️ RHB: {b['RHB']}\n"
+        f"• 💵 Cash: {b['Cash']}\n"
+        f"• 📈 PMO: {b['PMO']}\n"
+        f"• 💰 Net Worth: {b['Total']}\n"
+        "</blockquote>"
     )
 
-def format_balances(data):
+    buttons = {
+        "inline_keyboard": [[
+            {"text": "💳 All Balances", "callback_data": "cmd:balance"},
+            {"text": "📊 Open Google Sheet", "url": SHEET_URL}
+        ]]
+    }
+
+    return card, buttons
+
+def format_balances_card(data):
+    """Expandable card for /balance."""
     b = data["balances"]
-    return (
-        "Here's your current balance check:\n"
-        f"• 📱 E-Wallet: `{b['EWallet']}`\n"
-        f"• 💳 Maybank: `{b['Maybank']}`\n"
-        f"• 🏛️ RHB Bank: `{b['RHB']}`\n"
-        f"• 💵 Cash: `{b['Cash']}`\n"
-        f"• 📈 PMO: `{b['PMO']}`\n"
-        f"• 💰 Net Worth: `{b['Total']}`"
+    card = (
+        "Here's your current balance check ✨\n\n"
+        "<blockquote expandable>"
+        f"💰 <b>Net Worth: {b['Total']} | E-Wallet: {b['EWallet']}</b>\n"
+        "────────────────────\n"
+        f"• 📱 E-Wallet: {b['EWallet']}\n"
+        f"• 💳 Maybank: {b['Maybank']}\n"
+        f"• 🏛️ RHB Bank: {b['RHB']}\n"
+        f"• 💵 Cash: {b['Cash']}\n"
+        f"• 📈 PMO Investment: {b['PMO']}\n"
+        "</blockquote>"
     )
+    buttons = {
+        "inline_keyboard": [[
+            {"text": "📊 Open Google Sheet", "url": SHEET_URL}
+        ]]
+    }
+    return card, buttons
 
-def format_recent(data):
-    lines = ["Here are your latest records:"]
+def format_recent_card(data):
+    lines = []
     for tx in reversed(data["recent_tx"][-7:]):
         amt = f"+{tx['credit']}" if tx['credit'] else f"-{tx['debit']}"
-        lines.append(f"• `{tx['date']}` | *{tx['event']}* ({tx['note'] or tx['type']}): `{amt}`")
-    return "\n".join(lines)
+        lines.append(f"• <b>{tx['date']}</b> | {tx['event']} ({tx['note'] or tx['type']}): <code>{amt}</code>")
+    
+    top_line = lines[0] if lines else "• No recent records."
+    card = (
+        "Here are your latest records ✨\n\n"
+        "<blockquote expandable>"
+        f"📝 <b>Latest: {top_line}</b>\n"
+        "────────────────────\n"
+        + "\n".join(lines) + "\n"
+        "</blockquote>"
+    )
+    return card
 
 def send_telegram_message(token, chat_id, text, reply_markup=None):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "Markdown",
+        "parse_mode": "HTML",
         "disable_web_page_preview": True
     }
     if reply_markup:
@@ -317,7 +369,7 @@ def edit_telegram_message(token, chat_id, message_id, text, reply_markup=None):
         "chat_id": chat_id,
         "message_id": message_id,
         "text": text,
-        "parse_mode": "Markdown",
+        "parse_mode": "HTML",
         "disable_web_page_preview": True
     }
     if reply_markup is not None:
@@ -456,8 +508,8 @@ def evening_checkin_scheduler(token, chat_id):
                 time.sleep(random.randint(0, 1500))
                 data = fetch_latest_finance_data()
                 if data:
-                    rep = format_daily_report(data)
-                    send_telegram_message(token, chat_id, rep)
+                    card, buttons = format_daily_report_card(data)
+                    send_telegram_message(token, chat_id, card, reply_markup=buttons)
                     last_sent_date = today_str
             time.sleep(900)  # Check every 15 mins
         except:
@@ -485,7 +537,7 @@ def run_bot_service():
         cmd_url = f"https://api.telegram.org/bot{token}/setMyCommands"
         cmds = {
             "commands": [
-                {"command": "report", "description": "Quick 3-line spend check"},
+                {"command": "report", "description": "Quick spend check card"},
                 {"command": "balance", "description": "Check current balances"},
                 {"command": "add", "description": "Log an expense (/add 8.00 Meal note)"},
                 {"command": "recent", "description": "Last records"},
@@ -513,7 +565,14 @@ def run_bot_service():
                         cb_chat_id = cb["message"]["chat"]["id"]
                         cb_msg_id = cb["message"]["message_id"]
 
-                        if cb_data.startswith("confirm:"):
+                        if cb_data == "cmd:balance":
+                            answer_callback_query(token, cb_id)
+                            f_data = fetch_latest_finance_data()
+                            if f_data:
+                                card, buttons = format_balances_card(f_data)
+                                send_telegram_message(token, cb_chat_id, card, reply_markup=buttons)
+
+                        elif cb_data.startswith("confirm:"):
                             confirm_id = cb_data.split(":", 1)[1]
                             tx_items = PENDING_CONFIRMATIONS.pop(confirm_id, None)
                             if tx_items:
@@ -525,9 +584,9 @@ def run_bot_service():
                                     
                                     if len(tx_items) == 1:
                                         t = tx_items[0]
-                                        msg = f"Done! Saved `RM {tot:.2f}` ({t['event']} - {t['note'] or '-'}) to {row_text} 👍"
+                                        msg = f"Done! Saved <b>RM {tot:.2f}</b> ({t['event']} - {t['note'] or '-'}) to {row_text} 👍"
                                     else:
-                                        msg = f"Done! Saved all {len(tx_items)} items (`RM {tot:.2f}` total) to {row_text} 👍"
+                                        msg = f"Done! Saved all {len(tx_items)} items (<b>RM {tot:.2f}</b> total) to {row_text} 👍"
 
                                     edit_telegram_message(token, cb_chat_id, cb_msg_id, msg, reply_markup=None)
                                 except Exception as e:
@@ -556,7 +615,7 @@ def run_bot_service():
                                          {"text": "🏛️ RHB", "callback_data": "wiz_acc:RHB"}]
                                     ]
                                 }
-                                edit_telegram_message(token, cb_chat_id, cb_msg_id, f"Category: *{cat}*\n\nWhich account?", reply_markup=acc_kb)
+                                edit_telegram_message(token, cb_chat_id, cb_msg_id, f"Category: <b>{cat}</b>\n\nWhich account?", reply_markup=acc_kb)
 
                         elif cb_data.startswith("wiz_acc:"):
                             acc = cb_data.split(":", 1)[1]
@@ -566,7 +625,7 @@ def run_bot_service():
                                 sess["step"] = "note"
                                 answer_callback_query(token, cb_id)
                                 edit_telegram_message(token, cb_chat_id, cb_msg_id,
-                                    f"*{sess['event']}* via *{acc}*\n\nAny note or merchant? (e.g. `Kim Seng`, or reply `skip`):"
+                                    f"<b>{sess['event']}</b> via <b>{acc}</b>\n\nAny note or merchant? (e.g. <code>Kim Seng</code>, or reply <code>skip</code>):"
                                 )
                         continue
 
@@ -584,7 +643,7 @@ def run_bot_service():
                         g_key = os.environ.get("GEMINI_API_KEY") or cfg.get("gemini_api_key")
 
                         if not g_key:
-                            send_telegram_message(token, chat_id, "Need your Gemini API key first! Use `/set_gemini_key KEY`")
+                            send_telegram_message(token, chat_id, "Need your Gemini API key first! Use <code>/set_gemini_key KEY</code>")
                             continue
 
                         try:
@@ -623,25 +682,34 @@ def run_bot_service():
                                     "event": tx.get("event", "Meal"),
                                     "note": tx.get("note", "")
                                 })
-                                preview_lines.append(f"{idx}. *{tx.get('event')}*: `{amt_str}` ({tx.get('note') or '-'})")
+                                preview_lines.append(f"• <b>{tx.get('event')}</b>: <code>{amt_str}</code> ({tx.get('note') or '-'})")
 
                             PENDING_CONFIRMATIONS[c_id] = to_record
 
+                            # Expandable receipt confirmation card
                             if len(to_record) == 1:
                                 t = to_record[0]
                                 card_text = (
-                                    "Got it! Here's what I read:\n"
-                                    f"• *{t['event']}*: `-RM {float(t['debit'] or 0):.2f}`\n"
+                                    "Got it! Here is what I read ✨\n\n"
+                                    "<blockquote expandable>"
+                                    f"🧾 <b>{t['note'] or t['event']}: -RM {float(t['debit'] or 0):.2f}</b>\n"
+                                    "────────────────────\n"
+                                    f"• Category: {t['event']}\n"
+                                    f"• Account: {t['type']}\n"
+                                    f"• Date: {t['date']}\n"
                                     f"• Note: {t['note'] or '-'}\n"
-                                    f"• Account: {t['type']} ({t['date']})\n\n"
+                                    "</blockquote>\n"
                                     "Ready to save to your sheet?"
                                 )
                                 btn_label = "✅ Save to Sheet"
                             else:
                                 card_text = (
-                                    f"Found {len(to_record)} items on this receipt:\n\n"
-                                    + "\n".join(preview_lines) + "\n\n"
-                                    f"Total: `RM {total_debit:.2f}`\n\n"
+                                    f"Found {len(to_record)} items on this receipt ✨\n\n"
+                                    "<blockquote expandable>"
+                                    f"🧾 <b>{len(to_record)} Items: -RM {total_debit:.2f}</b>\n"
+                                    "────────────────────\n"
+                                    + "\n".join(preview_lines) + "\n"
+                                    "</blockquote>\n"
                                     f"Ready to save all {len(to_record)} to your sheet?"
                                 )
                                 btn_label = f"✅ Save All ({len(to_record)})"
@@ -678,7 +746,7 @@ def run_bot_service():
                                 }
                                 send_telegram_message(token, chat_id, f"RM {amt:.2f}! Which category?", reply_markup=cat_kb)
                             except:
-                                send_telegram_message(token, chat_id, "Just enter the number, like `8.50`:")
+                                send_telegram_message(token, chat_id, "Just enter the number, like <code>8.50</code>:")
                             continue
 
                         elif sess.get("step") == "note":
@@ -699,8 +767,14 @@ def run_bot_service():
                             }]
 
                             summary = (
-                                f"Save `RM {sess['amount']:.2f}` for *{sess.get('event')}* ({note_val or '-'})?\n"
-                                f"Paid with: {sess.get('type')}"
+                                "<blockquote expandable>"
+                                f"📝 <b>{note_val or sess.get('event')}: -RM {sess['amount']:.2f}</b>\n"
+                                "────────────────────\n"
+                                f"• Category: {sess.get('event')}\n"
+                                f"• Account: {sess.get('type')}\n"
+                                f"• Date: {today_str}\n"
+                                "</blockquote>\n"
+                                "Ready to save to sheet?"
                             )
                             kb = {
                                 "inline_keyboard": [[
@@ -721,7 +795,7 @@ def run_bot_service():
                             save_config(cfg)
                             send_telegram_message(token, chat_id, "Got it! Gemini key updated 👌")
                         else:
-                            send_telegram_message(token, chat_id, "Send `/set_gemini_key YOUR_KEY`")
+                            send_telegram_message(token, chat_id, "Send <code>/set_gemini_key YOUR_KEY</code>")
 
                     elif text.startswith("/add") or text.startswith("/new"):
                         parts = text.split()
@@ -750,7 +824,16 @@ def run_bot_service():
                                     "event": cat,
                                     "note": note
                                 }]
-                                summary = f"Save `RM {amt:.2f}` ({cat} - {note or '-'}) with {acc}?"
+                                summary = (
+                                    "<blockquote expandable>"
+                                    f"📝 <b>{note or cat}: -RM {amt:.2f}</b>\n"
+                                    "────────────────────\n"
+                                    f"• Category: {cat}\n"
+                                    f"• Account: {acc}\n"
+                                    f"• Date: {today_str}\n"
+                                    "</blockquote>\n"
+                                    "Save to Google Sheet?"
+                                )
                                 kb = {
                                     "inline_keyboard": [[
                                         {"text": "✅ Save", "callback_data": f"confirm:{c_id}"},
@@ -759,43 +842,43 @@ def run_bot_service():
                                 }
                                 send_telegram_message(token, chat_id, summary, reply_markup=kb)
                             except Exception as e:
-                                send_telegram_message(token, chat_id, f"Format: `/add 8.00 Meal Kim Seng`")
+                                send_telegram_message(token, chat_id, "Format: <code>/add 8.00 Meal Kim Seng</code>")
                         else:
                             WIZARD_SESSIONS[chat_id] = {"step": "amount"}
-                            send_telegram_message(token, chat_id, "How much did you spend? (e.g. `8.50`)")
+                            send_telegram_message(token, chat_id, "How much did you spend? (e.g. <code>8.50</code>)")
 
                     elif text.startswith("/start") or text.startswith("/help"):
                         help_text = (
                             "Hey! I'm Lau Jing Ying, your finance secretary ✨\n\n"
-                            "Just snap receipts to me or text:\n"
-                            "• `/add 8.00 Meal Kim Seng`\n"
-                            "• `/report` - Today's quick check\n"
-                            "• `/balance` - Check balances\n"
-                            "• `/recent` - Latest transactions"
+                            "Just snap receipts to me or message:\n"
+                            "• <code>/add 8.00 Meal Kim Seng</code>\n"
+                            "• <code>/report</code> - Today's quick check card\n"
+                            "• <code>/balance</code> - Check balances\n"
+                            "• <code>/recent</code> - Latest transactions"
                         )
                         send_telegram_message(token, chat_id, help_text)
 
                     elif text.startswith("/report") or text.startswith("/today"):
                         f_data = fetch_latest_finance_data()
                         if f_data:
-                            rep = format_daily_report(f_data)
-                            send_telegram_message(token, chat_id, rep)
+                            card, buttons = format_daily_report_card(f_data)
+                            send_telegram_message(token, chat_id, card, reply_markup=buttons)
                         else:
                             send_telegram_message(token, chat_id, "Couldn't reach your sheet right now!")
 
                     elif text.startswith("/balance"):
                         f_data = fetch_latest_finance_data()
                         if f_data:
-                            bal = format_balances(f_data)
-                            send_telegram_message(token, chat_id, bal)
+                            card, buttons = format_balances_card(f_data)
+                            send_telegram_message(token, chat_id, card, reply_markup=buttons)
                         else:
                             send_telegram_message(token, chat_id, "Couldn't get your balances!")
 
                     elif text.startswith("/recent"):
                         f_data = fetch_latest_finance_data()
                         if f_data:
-                            rc = format_recent(f_data)
-                            send_telegram_message(token, chat_id, rc)
+                            card = format_recent_card(f_data)
+                            send_telegram_message(token, chat_id, card)
                         else:
                             send_telegram_message(token, chat_id, "Couldn't fetch recent items!")
 
