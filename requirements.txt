@@ -1,2 +1,4 @@
-# All modules used in bot.py are Python standard library (urllib, json, base64, threading, http.server)
-# No heavy dependencies needed!
+# Requirements for Lau Jing Ying Telegram Bot
+pymupdf>=1.24.0
+google-genai>=0.1.0
+requests>=2.28.0

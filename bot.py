@@ -25,6 +25,7 @@ import uuid
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
+from pathlib import Path
 
 SPREADSHEET_ID = "15f_sbDn3Giga7Kg2Axf3ONQ296Ftz4QC8Se2zH0uzSE"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit?gid=2071550954#gid=2071550954"
@@ -78,14 +79,20 @@ def get_google_access_token():
         print(f"Error refreshing Google token: {e}")
         return None
 
-def fetch_latest_finance_data():
+def get_current_sheet_tab():
+    """Returns dynamic tab name for the current month, e.g. '2026 Nov Basic Acc 1'."""
+    now = datetime.now()
+    return f"{now.year} {now.strftime('%b')} Basic Acc 1"
+
+def fetch_latest_finance_data(tab_name=None):
     """Reads latest balances and transactions from Google Sheets."""
+    target_tab = tab_name or get_current_sheet_tab()
     access_token = get_google_access_token()
     rows = []
 
     if access_token:
         try:
-            range_enc = urllib.parse.quote("'2026 Oct Basic Acc 1'!A1:L35")
+            range_enc = urllib.parse.quote(f"'{target_tab}'!A1:L35")
             url = f"https://sheets.googleapis.com/v4/spreadsheets/{SPREADSHEET_ID}/values/{range_enc}"
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {access_token}"})
             with urllib.request.urlopen(req, timeout=15) as resp:
@@ -95,7 +102,7 @@ def fetch_latest_finance_data():
             print(f"REST API read failed: {e}")
 
     if not rows:
-        cmd = ["gsheets", "readonly", "read", SPREADSHEET_ID, "'2026 Oct Basic Acc 1'!A1:L35", "--json"]
+        cmd = ["gsheets", "readonly", "read", SPREADSHEET_ID, f"'{target_tab}'!A1:L35", "--json"]
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
             rows = json.loads(proc.stdout)
@@ -142,17 +149,18 @@ def fetch_latest_finance_data():
         "recent_tx": transactions
     }
 
-def append_transactions_to_sheet(tx_list):
+def append_transactions_to_sheet(tx_list, tab_name=None):
     """Appends transactions into Google Sheets."""
     if not isinstance(tx_list, list):
         tx_list = [tx_list]
 
+    target_tab = tab_name or get_current_sheet_tab()
     access_token = get_google_access_token()
     vals = []
 
     if access_token:
         try:
-            range_enc = urllib.parse.quote("'2026 Oct Basic Acc 1'!A4:F50")
+            range_enc = urllib.parse.quote(f"'{target_tab}'!A4:F100")
             url = f"https://sheets.googleapis.com/v4/spreadsheets/{SPREADSHEET_ID}/values/{range_enc}"
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {access_token}"})
             with urllib.request.urlopen(req, timeout=15) as resp:
@@ -161,7 +169,7 @@ def append_transactions_to_sheet(tx_list):
             print(f"REST read error: {e}")
 
     if not vals:
-        cmd_read = ["gsheets", "readonly", "read", SPREADSHEET_ID, "'2026 Oct Basic Acc 1'!A4:F50", "--json"]
+        cmd_read = ["gsheets", "readonly", "read", SPREADSHEET_ID, f"'{target_tab}'!A4:F100", "--json"]
         proc = subprocess.run(cmd_read, capture_output=True, text=True, check=True)
         vals = json.loads(proc.stdout)
 
@@ -200,10 +208,10 @@ def append_transactions_to_sheet(tx_list):
         ])
 
     if access_token:
-        range_target = urllib.parse.quote(f"'2026 Oct Basic Acc 1'!A{start_row}:F{end_row}")
+        range_target = urllib.parse.quote(f"'{target_tab}'!A{start_row}:F{end_row}")
         put_url = f"https://sheets.googleapis.com/v4/spreadsheets/{SPREADSHEET_ID}/values/{range_target}?valueInputOption=USER_ENTERED"
         payload = {
-            "range": f"'2026 Oct Basic Acc 1'!A{start_row}:F{end_row}",
+            "range": f"'{target_tab}'!A{start_row}:F{end_row}",
             "majorDimension": "ROWS",
             "values": formatted_rows
         }
@@ -219,7 +227,7 @@ def append_transactions_to_sheet(tx_list):
         batch_payload = [
             {
                 "op": "write",
-                "range": f"'2026 Oct Basic Acc 1'!A{start_row}:F{end_row}",
+                "range": f"'{target_tab}'!A{start_row}:F{end_row}",
                 "data": formatted_rows
             }
         ]
@@ -726,6 +734,84 @@ def run_bot_service():
                             send_telegram_message(token, chat_id, f"Oops, had trouble reading that: {e}")
                         continue
 
+                    # 2.5 Handle Document Upload (TNG PDF Statement)
+                    if "document" in msg:
+                        doc = msg["document"]
+                        file_name = doc.get("file_name", "")
+                        if file_name.lower().endswith(".pdf"):
+                            send_telegram_message(token, chat_id, "Decrypting and analyzing your TNG statement PDF... 📄🔍")
+                            try:
+                                file_id = doc["file_id"]
+                                pdf_bytes = download_telegram_photo(token, file_id)
+                                tmp_pdf = f"/tmp/tng_stmt_{int(time.time()*1000)}.pdf"
+                                with open(tmp_pdf, "wb") as f:
+                                    f.write(pdf_bytes)
+
+                                import pymupdf
+                                doc_pdf = pymupdf.open(tmp_pdf)
+                                if doc_pdf.is_encrypted:
+                                    if not doc_pdf.authenticate("134540120"):
+                                        send_telegram_message(token, chat_id, "Couldn't decrypt this PDF with your phone number password! 🔐")
+                                        doc_pdf.close()
+                                        continue
+                                dec_pdf_path = tmp_pdf.replace(".pdf", "_dec.pdf")
+                                doc_pdf.save(dec_pdf_path)
+                                doc_pdf.close()
+
+                                sys.path.insert(0, "/Users/yjia0310/.gemini/antigravity/scratch/tng-finance-sync/src")
+                                from tng_sync.pipeline import prepare_sync
+                                diff = prepare_sync(pdf_path=Path(dec_pdf_path), from_mail=False)
+
+                                if not diff.new_main_rows:
+                                    send_telegram_message(token, chat_id, f"All transactions in this statement are already recorded in <b>{diff.current_tab}</b>! ✨")
+                                    continue
+
+                                c_id = str(uuid.uuid4())[:8]
+                                to_record = []
+                                preview_lines = []
+                                total_debit = 0.0
+                                total_credit = 0.0
+
+                                for r in diff.new_main_rows:
+                                    to_record.append({
+                                        "date": r.date,
+                                        "credit": r.credit,
+                                        "debit": r.debit,
+                                        "type": r.type,
+                                        "event": r.event,
+                                        "note": r.note
+                                    })
+                                    dr_val = float(r.debit) if r.debit else 0.0
+                                    cr_val = float(r.credit) if r.credit else 0.0
+                                    total_debit += dr_val
+                                    total_credit += cr_val
+                                    amt_label = f"-RM {dr_val:.2f}" if dr_val > 0 else f"+RM {cr_val:.2f}"
+                                    preview_lines.append(f"• {r.date}: <code>{amt_label}</code> ({r.event} - {r.note or '-'})")
+
+                                PENDING_CONFIRMATIONS[c_id] = to_record
+
+                                card_text = (
+                                    f"Found <b>{len(to_record)} new transactions</b> from your TNG statement! ✨\n\n"
+                                    f"• Target Tab: <code>{diff.current_tab}</code>\n"
+                                    f"• Total Outflow: <code>-RM {total_debit:.2f}</code>\n"
+                                    f"• Total Inflow: <code>+RM {total_credit:.2f}</code>\n"
+                                    f"• GO+ Balance: <code>RM {diff.statement.closing_goplus_balance:.2f}</code>\n\n"
+                                    "<blockquote expandable>"
+                                    + "\n".join(preview_lines[:25]) + ("\n...(and more)" if len(preview_lines) > 25 else "") + "\n"
+                                    "</blockquote>\n"
+                                    f"Ready to sync all {len(to_record)} rows into your Google Sheet?"
+                                )
+                                kb = {
+                                    "inline_keyboard": [[
+                                        {"text": f"✅ Sync All ({len(to_record)})", "callback_data": f"confirm:{c_id}"},
+                                        {"text": "❌ Cancel", "callback_data": f"cancel:{c_id}"}
+                                    ]]
+                                }
+                                send_telegram_message(token, chat_id, card_text, reply_markup=kb)
+                            except Exception as e:
+                                send_telegram_message(token, chat_id, f"Error processing statement PDF: {e}")
+                            continue
+
                     # 3. Wizard steps
                     if chat_id in WIZARD_SESSIONS and not text.startswith("/"):
                         sess = WIZARD_SESSIONS[chat_id]
@@ -847,10 +933,34 @@ def run_bot_service():
                             WIZARD_SESSIONS[chat_id] = {"step": "amount"}
                             send_telegram_message(token, chat_id, "How much did you spend? (e.g. <code>8.50</code>)")
 
+                    elif text.startswith("/sync_tng") or text.startswith("/sync") or text.startswith("/tng"):
+                        send_telegram_message(token, chat_id, "Checking your latest Touch 'n Go statement from Mail... 📬")
+                        try:
+                            sys.path.insert(0, "/Users/yjia0310/.gemini/antigravity/scratch/tng-finance-sync/src")
+                            from tng_sync.pipeline import prepare_sync, execute_sync
+                            diff = prepare_sync(from_mail=True)
+                            if not diff.new_main_rows:
+                                send_telegram_message(token, chat_id, f"All transactions are already recorded in <b>{diff.current_tab}</b>! ✨")
+                            else:
+                                res_main, res_audit = execute_sync(diff)
+                                tot_dr = sum(float(r.debit or 0) for r in diff.new_main_rows)
+                                tot_cr = sum(float(r.credit or 0) for r in diff.new_main_rows)
+                                msg = (
+                                    f"✔ Successfully synced <b>{len(diff.new_main_rows)} rows</b> to <b>{diff.current_tab}</b>!\n\n"
+                                    f"• Debits: -RM {tot_dr:.2f}\n"
+                                    f"• Credits: +RM {tot_cr:.2f}\n"
+                                    f"• GO+ Balance: RM {diff.statement.closing_goplus_balance:.2f}\n\n"
+                                    f"<a href=\"{SHEET_URL}\">📊 Open Google Sheet</a>"
+                                )
+                                send_telegram_message(token, chat_id, msg)
+                        except Exception as e:
+                            send_telegram_message(token, chat_id, f"Sync notice: {e}\n\n💡 Tip: You can also forward or upload the TNG PDF statement directly here anytime!")
+
                     elif text.startswith("/start") or text.startswith("/help"):
                         help_text = (
                             "Hey! I'm Lau Jing Ying, your finance secretary ✨\n\n"
-                            "Just snap receipts to me or message:\n"
+                            "Just snap receipts or forward TNG statement PDFs, or message:\n"
+                            "• <code>/sync_tng</code> - Sync Touch 'n Go from Mail.app\n"
                             "• <code>/add 8.00 Meal Kim Seng</code>\n"
                             "• <code>/report</code> - Today's quick check card\n"
                             "• <code>/balance</code> - Check balances\n"
